@@ -1,38 +1,35 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
 import {
   Moon,
   Activity,
   BatteryCharging,
-  HeartPulse,
+  Sparkles,
   Link2,
   RefreshCw,
   AlertTriangle,
-  Sparkles,
-  ChevronRight,
-  ShieldCheck,
   LogOut,
 } from "lucide-react";
 
+import {
+  LineChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
 const OURA_AUTH_URL = "https://cloud.ouraring.com/oauth/authorize";
-const OURA_API_BASE = "https://api.ouraring.com/v2";
+const BACKEND_URL = "https://optimalife-pearl.vercel.app/api/oura";
+const COACH_URL = "https://optimalife-pearl.vercel.app/api/coach";
 
 const CLIENT_ID = import.meta.env.VITE_OURA_CLIENT_ID;
 const REDIRECT_URI = import.meta.env.VITE_OURA_REDIRECT_URI;
 const OURA_SCOPES = "daily personal";
 
-function getTodayDateString() {
-  return new Date().toISOString().split("T")[0];
-}
-
-function getDateDaysAgo(days) {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return date.toISOString().split("T")[0];
-}
-
 function createStateValue() {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+  return Math.random().toString(36).slice(2);
 }
 
 function scoreLabel(score) {
@@ -49,172 +46,97 @@ function scoreColor(score) {
   return "text-rose-400";
 }
 
-function extractLatestRecord(responseData) {
-  if (!responseData || !Array.isArray(responseData.data) || responseData.data.length === 0) {
-    return null;
+function fallbackAdviceFromData({ sleep, readiness, activity }) {
+  const advice = [];
+
+  if ((sleep?.score ?? 0) < 75) {
+    advice.push("Shift tonight’s bedtime earlier and keep the last hour low-stimulation.");
   }
 
-  return [...responseData.data].sort((a, b) => {
-    const aDate = new Date(a.day ?? 0).getTime();
-    const bDate = new Date(b.day ?? 0).getTime();
-    return bDate - aDate;
-  })[0];
-}
-
-function getErrorMessage(error) {
-  if (axios.isAxiosError(error)) {
-    const apiDetail =
-      error.response?.data?.detail ||
-      error.response?.data?.title ||
-      error.response?.data?.error_description;
-
-    if (apiDetail) return apiDetail;
-
-    if (error.response?.status === 401) {
-      return "Your Oura session is no longer valid. Please reconnect your account.";
-    }
-
-    if (error.response?.status === 403) {
-      return "This app is missing the required Oura scopes. Reconnect and allow access to daily data.";
-    }
-
-    if (error.response?.status === 429) {
-      return "Rate limit reached. Wait a moment, then refresh again.";
-    }
-
-    if (error.message) return error.message;
+  if ((readiness?.score ?? 0) < 75) {
+    advice.push("Keep today recovery-forward with lighter movement and fewer high-stress commitments.");
   }
 
-  return "Something went wrong while talking to the Oura API.";
-}
-
-function buildRecommendations({ sleep, readiness, activity }) {
-  const recs = [];
-
-  const sleepScore = sleep?.score ?? null;
-  const readinessScore = readiness?.score ?? null;
-  const activityScore = activity?.score ?? null;
-
-  const contributors = readiness?.contributors || {};
-  const sleepDurationSeconds = sleep?.contributors?.total_sleep ?? null;
-  const efficiency = sleep?.contributors?.efficiency ?? null;
-  const recoveryIndex = contributors.recovery_index ?? null;
-  const temperature = contributors.temperature ?? null;
-  const previousDayActivity = readiness?.contributors?.previous_day_activity ?? null;
-
-  if (sleepScore !== null && sleepScore < 70) {
-    recs.push("Go to bed about 30 minutes earlier tonight and keep your wind-down screen-free for the last hour.");
+  if ((activity?.score ?? 0) < 75 && (readiness?.score ?? 0) >= 75) {
+    advice.push("Your recovery looks decent, so a moderate walk or workout would be a good fit today.");
   }
 
-  if (sleepScore !== null && sleepScore < 60) {
-    recs.push("Skip late caffeine today and aim for a lighter evening so your body has a better shot at recovery.");
+  if ((sleep?.contributors?.efficiency ?? 100) < 85) {
+    advice.push("Support better sleep quality tonight by dimming lights earlier and avoiding a heavy late meal.");
   }
 
-  if (readinessScore !== null && readinessScore < 70) {
-    recs.push("Avoid high-intensity cardio today. Choose a walk, mobility session, or light strength work instead.");
+  if (advice.length < 4) {
+    advice.push("Get outside for 10–20 minutes of daylight early in the day.");
   }
 
-  if (readinessScore !== null && readinessScore < 60) {
-    recs.push("Protect recovery today: reduce workload where possible, hydrate more intentionally, and prioritize an earlier bedtime.");
+  if (advice.length < 4) {
+    advice.push("Stay hydrated and keep meals steady so your energy stays even.");
   }
 
-  if (activityScore !== null && activityScore < 70 && readinessScore !== null && readinessScore >= 75) {
-    recs.push("Your recovery looks solid, so this is a good day to add a purposeful workout or a longer walk to raise activity.");
-  }
-
-  if (activityScore !== null && activityScore > 85 && readinessScore !== null && readinessScore < 70) {
-    recs.push("Your activity has been strong, but recovery is lagging. Keep movement gentle today and avoid stacking another hard session.");
-  }
-
-  if (sleepDurationSeconds !== null && sleepDurationSeconds < 7 * 3600) {
-    recs.push("Try to add at least 45–60 more minutes of sleep opportunity tonight by starting your bedtime routine earlier.");
-  }
-
-  if (efficiency !== null && efficiency < 75) {
-    recs.push("Improve sleep quality by keeping your room cooler, dimming lights earlier, and avoiding heavy meals close to bedtime.");
-  }
-
-  if (recoveryIndex !== null && recoveryIndex < 70) {
-    recs.push("Treat today like a recovery-focused day: keep exercise moderate, eat consistently, and build in a short afternoon reset.");
-  }
-
-  if (temperature !== null && temperature < 70) {
-    recs.push("Your body may be under extra strain. Take it easier, stay hydrated, and consider an earlier night if you feel run down.");
-  }
-
-  if (previousDayActivity !== null && previousDayActivity < 70 && activityScore !== null && activityScore < 75) {
-    recs.push("Break up sedentary time with short movement snacks today—10 minutes after meals is a great place to start.");
-  }
-
-  if (
-    sleepScore !== null &&
-    readinessScore !== null &&
-    activityScore !== null &&
-    sleepScore >= 82 &&
-    readinessScore >= 82 &&
-    activityScore >= 75
-  ) {
-    recs.push("You’re in a strong zone today. This is a good day for deep work, a quality workout, and keeping your routine consistent.");
-  }
-
-  const uniqueRecs = [...new Set(recs)];
-
-  if (uniqueRecs.length < 3) {
-    uniqueRecs.push(
-      "Anchor your day with a consistent meal schedule and hydration target so energy stays stable from morning through evening."
-    );
-  }
-
-  if (uniqueRecs.length < 4) {
-    uniqueRecs.push(
-      "Get outside for 10–20 minutes of daylight early in the day to support energy, mood, and your sleep timing tonight."
-    );
-  }
-
-  return uniqueRecs.slice(0, 5);
+  return advice.slice(0, 4);
 }
 
 function MetricCard({ title, score, icon: Icon, subtitle }) {
   return (
-    <div className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-2xl backdrop-blur">
-      <div className="mb-4 flex items-start justify-between">
-        <div>
-          <p className="text-sm text-zinc-400">{title}</p>
-          <h3 className="mt-1 text-2xl font-semibold text-white">{score ?? "--"}</h3>
-          <p className={`mt-1 text-sm font-medium ${score != null ? scoreColor(score) : "text-zinc-500"}`}>
-            {score != null ? scoreLabel(score) : "No data"}
-          </p>
-        </div>
-        <div className="rounded-2xl bg-zinc-900/80 p-3 ring-1 ring-white/10">
+    <div className="rounded-2xl bg-gradient-to-br from-cyan-500/10 to-emerald-500/10 border border-white/10 p-6 shadow-xl hover:scale-[1.02] transition backdrop-blur-xl">
+      <div className="flex justify-between items-center mb-4">
+        <div className="text-sm text-zinc-400">{title}</div>
+        <div className="bg-white/10 p-2 rounded-lg">
           <Icon className="h-5 w-5 text-cyan-300" />
         </div>
       </div>
-      <p className="text-sm text-zinc-400">{subtitle}</p>
+
+      <div className="text-5xl font-semibold text-white mt-2">
+        {score ?? "--"}
+      </div>
+
+      <div className={`text-sm mt-1 ${score != null ? scoreColor(score) : "text-zinc-500"}`}>
+        {score != null ? scoreLabel(score) : "No data"}
+      </div>
+
+      <div className="text-xs text-zinc-500 mt-2">{subtitle}</div>
     </div>
   );
 }
 
-function RecommendationCard({ items }) {
+function RecommendationCard({ items, aiStatus, aiError }) {
   return (
-    <div className="rounded-3xl border border-cyan-400/20 bg-gradient-to-br from-cyan-500/10 to-emerald-500/10 p-6 shadow-2xl">
-      <div className="mb-5 flex items-center gap-3">
-        <div className="rounded-2xl bg-cyan-400/15 p-3">
+    <div className="sticky top-8 rounded-3xl border border-cyan-400/20 bg-gradient-to-br from-cyan-400/10 via-emerald-400/10 to-teal-400/10 p-6 shadow-2xl backdrop-blur-xl">
+      <div className="flex items-center gap-3 mb-6">
+        <div className="bg-cyan-500/20 p-3 rounded-xl">
           <Sparkles className="h-5 w-5 text-cyan-300" />
         </div>
+
         <div>
-          <h2 className="text-xl font-semibold text-white">Today’s lifestyle coaching</h2>
-          <p className="text-sm text-zinc-300">Generated from your latest Oura sleep, readiness, and activity data.</p>
+          <h2 className="text-lg font-semibold text-white">
+            AI Lifestyle Coach
+          </h2>
+          <p className="text-sm text-zinc-400">
+            {aiStatus === "live"
+              ? "Gemini-generated recommendations"
+              : aiStatus === "fallback"
+              ? "Fallback recommendations"
+              : aiStatus === "loading"
+              ? "Generating advice..."
+              : "Personalized recommendations"}
+          </p>
         </div>
       </div>
 
-      <div className="space-y-3">
+      {aiError ? (
+        <div className="mb-4 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-xs text-amber-100">
+          Gemini request failed, so the app is showing backup recommendations.
+          <div className="mt-1 text-amber-200/80">{aiError}</div>
+        </div>
+      ) : null}
+
+      <div className="space-y-4">
         {items.map((item, index) => (
           <div
-            key={`${item}-${index}`}
-            className="flex items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-4"
+            key={index}
+            className="rounded-xl bg-white/5 backdrop-blur border border-white/10 p-4 text-sm text-zinc-100"
           >
-            <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-cyan-300" />
-            <p className="text-sm leading-6 text-zinc-100">{item}</p>
+            {item}
           </div>
         ))}
       </div>
@@ -223,12 +145,21 @@ function RecommendationCard({ items }) {
 }
 
 export default function App() {
-  const [accessToken, setAccessToken] = useState(localStorage.getItem("oura_access_token") || "");
+  const [accessToken, setAccessToken] = useState(
+    localStorage.getItem("oura_access_token") || ""
+  );
+
   const [ouraData, setOuraData] = useState({
     sleep: null,
     readiness: null,
     activity: null,
   });
+
+  const [history, setHistory] = useState([]);
+  const [aiAdvice, setAiAdvice] = useState([]);
+  const [aiStatus, setAiStatus] = useState("idle");
+  const [aiError, setAiError] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [error, setError] = useState("");
@@ -238,45 +169,18 @@ export default function App() {
     const hash = window.location.hash.replace(/^#/, "");
     const params = new URLSearchParams(hash);
     const token = params.get("access_token");
-    const returnedState = params.get("state");
-    const savedState = localStorage.getItem("oura_oauth_state");
-    const oauthError = params.get("error");
-
-    if (oauthError) {
-      setError("Oura authorization was not completed. Please try connecting again.");
-      setAuthLoading(false);
-      return;
-    }
 
     if (token) {
-      if (savedState && returnedState && savedState !== returnedState) {
-        setError("OAuth state validation failed. Please reconnect your account.");
-        setAuthLoading(false);
-        return;
-      }
-
       localStorage.setItem("oura_access_token", token);
-      localStorage.removeItem("oura_oauth_state");
       setAccessToken(token);
-
-      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      window.history.replaceState({}, document.title, window.location.pathname);
     }
 
     setAuthLoading(false);
   }, []);
 
-  const recommendations = useMemo(() => buildRecommendations(ouraData), [ouraData]);
-
   const connectOura = () => {
-    setError("");
-
-    if (!CLIENT_ID || !REDIRECT_URI) {
-      setError("Missing Oura environment variables. Add VITE_OURA_CLIENT_ID and VITE_OURA_REDIRECT_URI to your .env file.");
-      return;
-    }
-
     const state = createStateValue();
-    localStorage.setItem("oura_oauth_state", state);
 
     const authUrl = new URL(OURA_AUTH_URL);
     authUrl.searchParams.set("response_type", "token");
@@ -290,11 +194,16 @@ export default function App() {
 
   const disconnectOura = () => {
     localStorage.removeItem("oura_access_token");
-    localStorage.removeItem("oura_oauth_state");
     setAccessToken("");
-    setOuraData({ sleep: null, readiness: null, activity: null });
-    setLastUpdated("");
-    setError("");
+    setOuraData({
+      sleep: null,
+      readiness: null,
+      activity: null,
+    });
+    setAiAdvice([]);
+    setAiStatus("idle");
+    setAiError("");
+    setHistory([]);
   };
 
   const fetchOuraData = async () => {
@@ -302,215 +211,240 @@ export default function App() {
 
     setLoading(true);
     setError("");
+    setAiError("");
 
     try {
-      const startDate = getDateDaysAgo(7);
-      const endDate = getTodayDateString();
-
-      const headers = {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-      };
-
-      const [sleepRes, readinessRes, activityRes] = await Promise.all([
-        axios.get(`${OURA_API_BASE}/usercollection/daily_sleep`, {
-          headers,
-          params: { start_date: startDate, end_date: endDate },
-        }),
-        axios.get(`${OURA_API_BASE}/usercollection/daily_readiness`, {
-          headers,
-          params: { start_date: startDate, end_date: endDate },
-        }),
-        axios.get(`${OURA_API_BASE}/usercollection/daily_activity`, {
-          headers,
-          params: { start_date: startDate, end_date: endDate },
-        }),
-      ]);
-
-      setOuraData({
-        sleep: extractLatestRecord(sleepRes.data),
-        readiness: extractLatestRecord(readinessRes.data),
-        activity: extractLatestRecord(activityRes.data),
+      const response = await axios.get(BACKEND_URL, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
       });
 
+      const sleep = response.data.sleep?.data?.[0] ?? null;
+      const readiness = response.data.readiness?.data?.[0] ?? null;
+      const activity = response.data.activity?.data?.[0] ?? null;
+
+      const formatted = {
+        sleep,
+        readiness,
+        activity,
+      };
+
+      setOuraData(formatted);
+
+      const sleepSeries = response.data.sleep?.data ?? [];
+      const readinessSeries = response.data.readiness?.data ?? [];
+      const activitySeries = response.data.activity?.data ?? [];
+
+      const chartData = sleepSeries
+        .slice(0, 7)
+        .map((d, i) => ({
+          day: d.day?.slice(5) ?? `Day ${i + 1}`,
+          sleep: d.score ?? null,
+          readiness: readinessSeries[i]?.score ?? null,
+          activity: activitySeries[i]?.score ?? null,
+        }))
+        .reverse();
+
+      setHistory(chartData);
+
+      setAiStatus("loading");
+
+      try {
+        const ai = await axios.post(COACH_URL, formatted, {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+
+        console.log("Gemini coach response:", ai.data);
+
+        const parsedAdvice = Array.isArray(ai.data?.adviceItems)
+          ? ai.data.adviceItems.filter(Boolean)
+          : typeof ai.data?.advice === "string"
+          ? ai.data.advice
+              .split("\n")
+              .map((a) => a.replace(/^[-•\d.)\s]+/, "").trim())
+              .filter(Boolean)
+          : [];
+
+        if (parsedAdvice.length > 0) {
+          setAiAdvice(parsedAdvice);
+          setAiStatus("live");
+          setAiError("");
+        } else {
+          const fallback = fallbackAdviceFromData(formatted);
+          setAiAdvice(fallback);
+          setAiStatus("fallback");
+          setAiError("Gemini returned an empty response.");
+        }
+      } catch (coachErr) {
+        console.error(
+          "Gemini coach error:",
+          coachErr?.response?.data || coachErr?.message || coachErr
+        );
+
+        const fallback = fallbackAdviceFromData(formatted);
+        setAiAdvice(fallback);
+        setAiStatus("fallback");
+
+        const backendMessage =
+          coachErr?.response?.data?.error ||
+          coachErr?.response?.data?.message ||
+          coachErr?.message ||
+          "Unknown AI request error.";
+
+        setAiError(backendMessage);
+      }
+
       setLastUpdated(new Date().toLocaleString());
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
+    } catch (ouraErr) {
+      console.error("Oura fetch error:", ouraErr?.response?.data || ouraErr?.message || ouraErr);
+      setError("Failed to fetch Oura data.");
     }
+
+    setLoading(false);
   };
 
   useEffect(() => {
     if (!authLoading && accessToken) {
       fetchOuraData();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, accessToken]);
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(6,182,212,0.18),_transparent_30%),radial-gradient(circle_at_right,_rgba(16,185,129,0.12),_transparent_20%),linear-gradient(to_bottom,_#09090b,_#111827,_#09090b)] text-white">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <header className="mb-8">
-          <div className="overflow-hidden rounded-[2rem] border border-white/10 bg-white/5 shadow-2xl backdrop-blur">
-            <div className="grid gap-8 p-6 md:grid-cols-[1.3fr_0.9fr] md:p-10">
-              <div>
-                <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
-                  <ShieldCheck className="h-4 w-4" />
-                  Oura-powered wellness coaching
-                </div>
+    <div className="relative min-h-screen bg-gradient-to-b from-[#031926] via-[#062c3f] to-[#02121a] text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.15),transparent_35%),radial-gradient(circle_at_bottom_right,rgba(52,211,153,0.12),transparent_40%)] pointer-events-none"></div>
 
-                <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-                  Lifestyle Coach
-                </h1>
+      <div className="relative mx-auto max-w-6xl px-6 py-12">
+        <header className="mb-14">
+          <h1 className="text-5xl font-semibold tracking-tight mb-3">
+            Lifestyle Coach
+          </h1>
 
-                <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-300 sm:text-lg">
-                  Connect your Oura account and turn your latest sleep, readiness, and activity scores into
-                  practical decisions for training, recovery, and daily energy.
-                </p>
+          <p className="text-zinc-400 max-w-xl leading-relaxed">
+            Transform your sleep, readiness, and activity signals into calm,
+            intentional decisions for recovery, focus, and energy.
+          </p>
 
-                <div className="mt-6 flex flex-wrap gap-3">
-                  {!accessToken ? (
-                    <button
-                      onClick={connectOura}
-                      className="inline-flex items-center gap-2 rounded-2xl bg-cyan-400 px-5 py-3 font-medium text-slate-950 transition hover:bg-cyan-300"
-                    >
-                      <Link2 className="h-4 w-4" />
-                      Connect Oura
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        onClick={fetchOuraData}
-                        disabled={loading}
-                        className="inline-flex items-center gap-2 rounded-2xl bg-cyan-400 px-5 py-3 font-medium text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-                        {loading ? "Refreshing..." : "Refresh data"}
-                      </button>
+          <div className="mt-6 flex gap-3">
+            {!accessToken ? (
+              <button
+                onClick={connectOura}
+                className="flex items-center gap-2 bg-cyan-400 hover:bg-cyan-300 text-slate-900 px-5 py-3 rounded-full font-medium shadow-lg transition"
+              >
+                <Link2 className="h-4 w-4" />
+                Connect Oura
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={fetchOuraData}
+                  className="flex items-center gap-2 bg-cyan-400 hover:bg-cyan-300 text-slate-900 px-5 py-3 rounded-full shadow-lg"
+                >
+                  <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+                  Refresh
+                </button>
 
-                      <button
-                        onClick={disconnectOura}
-                        className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 font-medium text-white transition hover:bg-white/10"
-                      >
-                        <LogOut className="h-4 w-4" />
-                        Disconnect
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                <div className="mt-4 text-sm text-zinc-400">
-                  {lastUpdated ? `Last updated: ${lastUpdated}` : "No synced data yet."}
-                </div>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-3 md:grid-cols-1">
-                <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
-                  <div className="mb-2 flex items-center gap-2 text-zinc-300">
-                    <Moon className="h-4 w-4 text-cyan-300" />
-                    Sleep
-                  </div>
-                  <p className="text-sm leading-6 text-zinc-400">
-                    Use nightly recovery signals to guide bedtime, caffeine timing, and intensity.
-                  </p>
-                </div>
-
-                <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
-                  <div className="mb-2 flex items-center gap-2 text-zinc-300">
-                    <BatteryCharging className="h-4 w-4 text-emerald-300" />
-                    Readiness
-                  </div>
-                  <p className="text-sm leading-6 text-zinc-400">
-                    Decide whether to push, maintain, or back off based on recovery and strain.
-                  </p>
-                </div>
-
-                <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
-                  <div className="mb-2 flex items-center gap-2 text-zinc-300">
-                    <Activity className="h-4 w-4 text-violet-300" />
-                    Activity
-                  </div>
-                  <p className="text-sm leading-6 text-zinc-400">
-                    Balance movement and recovery so your week stays productive without tipping into burnout.
-                  </p>
-                </div>
-              </div>
-            </div>
+                <button
+                  onClick={disconnectOura}
+                  className="flex items-center gap-2 border border-white/20 px-5 py-3 rounded-full"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Disconnect
+                </button>
+              </>
+            )}
           </div>
+
+          <p className="text-sm text-zinc-500 mt-3">
+            {lastUpdated ? `Last updated: ${lastUpdated}` : ""}
+          </p>
         </header>
 
         {error && (
-          <div className="mb-6 flex items-start gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/10 p-4 text-rose-100">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-            <div>
-              <p className="font-medium">Connection issue</p>
-              <p className="mt-1 text-sm text-rose-100/90">{error}</p>
-            </div>
+          <div className="mb-6 bg-red-500/20 border border-red-400 p-4 rounded-xl">
+            <AlertTriangle className="inline mr-2 h-4 w-4" />
+            {error}
           </div>
         )}
 
-        <main className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <section className="space-y-6">
-            <div className="grid gap-4 sm:grid-cols-3">
-              <MetricCard
-                title="Sleep Score"
-                score={ouraData.sleep?.score ?? null}
-                icon={Moon}
-                subtitle={ouraData.sleep?.day ? `Latest entry: ${ouraData.sleep.day}` : "Waiting for data"}
-              />
-              <MetricCard
-                title="Readiness Score"
-                score={ouraData.readiness?.score ?? null}
-                icon={BatteryCharging}
-                subtitle={ouraData.readiness?.day ? `Latest entry: ${ouraData.readiness.day}` : "Waiting for data"}
-              />
-              <MetricCard
-                title="Activity Score"
-                score={ouraData.activity?.score ?? null}
-                icon={Activity}
-                subtitle={ouraData.activity?.day ? `Latest entry: ${ouraData.activity.day}` : "Waiting for data"}
-              />
+        <main className="grid gap-10 lg:grid-cols-3">
+          <section className="lg:col-span-2 space-y-12">
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl shadow-[0_0_40px_rgba(34,211,238,0.05)]">
+              <h2 className="text-xl font-semibold text-white mb-6">
+                Health Dashboard
+              </h2>
+
+              <div className="grid sm:grid-cols-3 gap-6">
+                <MetricCard
+                  title="Sleep Score"
+                  score={ouraData.sleep?.score}
+                  icon={Moon}
+                  subtitle={ouraData.sleep?.day}
+                />
+
+                <MetricCard
+                  title="Readiness Score"
+                  score={ouraData.readiness?.score}
+                  icon={BatteryCharging}
+                  subtitle={ouraData.readiness?.day}
+                />
+
+                <MetricCard
+                  title="Activity Score"
+                  score={ouraData.activity?.score}
+                  icon={Activity}
+                  subtitle={ouraData.activity?.day}
+                />
+              </div>
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur">
-              <div className="mb-5 flex items-center gap-3">
-                <div className="rounded-2xl bg-white/5 p-3">
-                  <HeartPulse className="h-5 w-5 text-cyan-300" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold text-white">Data snapshot</h2>
-                  <p className="text-sm text-zinc-400">The latest daily summaries pulled from Oura.</p>
-                </div>
-              </div>
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl">
+              <h2 className="text-xl font-semibold mb-6">
+                7-Day Trends
+              </h2>
 
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                  <p className="text-sm font-medium text-zinc-300">Sleep</p>
-                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-zinc-400">
-                    {JSON.stringify(ouraData.sleep, null, 2)}
-                  </pre>
-                </div>
+              <ResponsiveContainer width="100%" height={260}>
+                <LineChart data={history}>
+                  <XAxis dataKey="day" stroke="#94a3b8" />
+                  <YAxis domain={[50, 100]} stroke="#94a3b8" />
+                  <Tooltip />
 
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                  <p className="text-sm font-medium text-zinc-300">Readiness</p>
-                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-zinc-400">
-                    {JSON.stringify(ouraData.readiness, null, 2)}
-                  </pre>
-                </div>
+                  <Line
+                    type="monotone"
+                    dataKey="sleep"
+                    stroke="#22d3ee"
+                    strokeWidth={4}
+                    dot={{ r: 4 }}
+                  />
 
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                  <p className="text-sm font-medium text-zinc-300">Activity</p>
-                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-zinc-400">
-                    {JSON.stringify(ouraData.activity, null, 2)}
-                  </pre>
-                </div>
-              </div>
+                  <Line
+                    type="monotone"
+                    dataKey="readiness"
+                    stroke="#34d399"
+                    strokeWidth={4}
+                    dot={{ r: 4 }}
+                  />
+
+                  <Line
+                    type="monotone"
+                    dataKey="activity"
+                    stroke="#60a5fa"
+                    strokeWidth={4}
+                    dot={{ r: 4 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </section>
 
           <aside>
-            <RecommendationCard items={recommendations} />
+            <RecommendationCard
+              items={aiAdvice}
+              aiStatus={aiStatus}
+              aiError={aiError}
+            />
           </aside>
         </main>
       </div>
